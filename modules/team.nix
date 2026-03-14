@@ -214,14 +214,16 @@ in {
         description = "Sync a shared/ subdirectory in the workspace via rclone (Google Drive)";
       };
 
+      teamDriveId = lib.mkOption {
+        type = lib.types.str;
+        default = "0AMjJCQnNMu-AUk9PVA";
+        description = "Google Shared Drive (Team Drive) ID. Default: darkmatter shared drive.";
+      };
+
       folderId = lib.mkOption {
         type = lib.types.str;
-        default = "12VTEdvFB6CyoGvrbWsVhUGqPMy_S2j6X";
-        description = ''
-          Google Drive folder ID for the shared workspace.
-          Default: "OpenClaw Team Workspace" folder in darkmatter.io Drive.
-          The folder must be shared with the service account email.
-        '';
+        default = "1G8fUAxyuK4Nnslauy-QWkfP4FKATVoGy";
+        description = "Folder ID within the Shared Drive. Default: openclaw-workspace folder.";
       };
 
       interval = lib.mkOption {
@@ -429,22 +431,37 @@ in {
         mkdir -p "$HOME/.openclaw/workspace/shared"
         mkdir -p "$HOME/.config/rclone"
 
-        # Convert sops-decrypted YAML SA key to JSON for rclone
+        # sops-nix decrypts the YAML; convert to JSON for rclone
         SA_KEY_PATH="$HOME/.config/openclaw-gdrive-sa.json"
         SA_SOPS_PATH="${config.sops.secrets.openclaw-gdrive-sa-key.path}"
         if [[ -f "$SA_SOPS_PATH" ]]; then
+          # sops-nix gives us the raw decrypted YAML; use python to convert
           ${pkgs.python3}/bin/python3 -c "
-import yaml, json, sys
+import json, sys
+# Parse simple key: value YAML (no nested structures)
+data = {}
+current_key = None
+current_val = []
 with open('$SA_SOPS_PATH') as f:
-    data = yaml.safe_load(f)
-# Remove sops metadata if present
-data.pop('sops', None)
+    for line in f:
+        stripped = line.rstrip('\n')
+        if not stripped.startswith(' ') and ':' in stripped:
+            if current_key:
+                data[current_key] = '\n'.join(current_val).rstrip('\n') if len(current_val) > 1 else (current_val[0] if current_val else '')
+            k, v = stripped.split(':', 1)
+            current_key = k.strip()
+            v = v.strip()
+            current_val = [] if v == '|' else [v]
+        elif current_key and stripped.startswith('    '):
+            current_val.append(stripped[4:])
+    if current_key:
+        data[current_key] = '\n'.join(current_val).rstrip('\n') if len(current_val) > 1 else (current_val[0] if current_val else '')
+# Ensure private_key has trailing newline
+if 'private_key' in data and not data['private_key'].endswith('\n'):
+    data['private_key'] += '\n'
 with open('$SA_KEY_PATH', 'w') as f:
     json.dump(data, f, indent=2)
-" 2>/dev/null || {
-            # Fallback: if it's already JSON, just copy
-            cp "$SA_SOPS_PATH" "$SA_KEY_PATH"
-          }
+"
           chmod 600 "$SA_KEY_PATH"
         fi
 
@@ -467,6 +484,7 @@ with open('$RCLONE_CONF', 'w') as f:
 type = drive
 scope = drive
 service_account_file = $SA_KEY_PATH
+team_drive = ${cfg.sharedWorkspace.teamDriveId}
 root_folder_id = ${cfg.sharedWorkspace.folderId}
 EOF
       ''
