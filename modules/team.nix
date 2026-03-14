@@ -371,9 +371,11 @@ in {
       age = {
         sshKeyPaths = [
           "/etc/ssh/ssh_host_ed25519_key"
-          "${config.home.homeDirectory}/.ssh/id_ed25519"
         ] ++ cfg.sopsIdentityPaths;
-        keyFile = "${config.home.homeDirectory}/.config/sops/age/keys.txt";
+        keyFile =
+          if pkgs.stdenv.isDarwin
+          then "${config.home.homeDirectory}/Library/Application Support/sops/age/keys.txt"
+          else "${config.home.homeDirectory}/.config/sops/age/keys.txt";
         generateKey = false;
       };
 
