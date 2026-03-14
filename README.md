@@ -90,6 +90,41 @@ darwin-rebuild switch --flake .
 - **acpx config** — automatically written to `~/.acpx/config.json`
 - **Auto-decrypted secrets** — gateway password and Volt token via sops-nix (no manual token files)
 
+## Shared Workspace
+
+Team members can sync a `shared/` subdirectory in their OpenClaw workspace via rclone. This is useful for shared skills, team wiki, memory, and tool notes.
+
+```nix
+openclaw-dm = {
+  enable = true;
+  # ...
+
+  sharedWorkspace = {
+    enable = true;
+    remote = "s3:darkmatter-openclaw/shared";  # or dropbox:, gdrive:, etc.
+    interval = "5m";       # sync every 5 minutes
+    direction = "bisync";  # two-way sync (default)
+  };
+};
+```
+
+Configure the rclone remote first: `rclone config`
+
+**Workspace layout:**
+
+```
+~/.openclaw/workspace/
+├── shared/              ← rclone-synced across team
+│   ├── skills/          ← team skills
+│   ├── team-wiki/       ← shared knowledge base
+│   ├── memory/          ← team memory
+│   └── TOOLS.md         ← shared tool notes
+├── IDENTITY.md          ← personal (your agent's name/emoji)
+├── USER.md              ← personal (about you)
+├── SOUL.md              ← personal (agent personality)
+└── HEARTBEAT.md         ← personal (background tasks)
+```
+
 ## Adding a Team Member
 
 1. Get their age public key (or SSH ed25519 public key)
