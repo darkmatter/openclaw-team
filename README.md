@@ -58,11 +58,11 @@ openclaw-dm = {
 };
 ```
 
-That's it. Override any OpenClaw setting directly:
+That's it. This runs your own gateway with Tailscale Funnel. Works for single-machine setups — no `role` or `primaryHost` needed.
+
+Override any OpenClaw config directly — the team module uses `lib.mkDefault` so your values always win:
 
 ```nix
-# Team module sets sensible defaults with lib.mkDefault.
-# Override anything via programs.openclaw:
 programs.openclaw.instances.default.config = {
   agents.defaults.model.primary = "anthropic/claude-opus-4-6";
   # ... any openclaw config field
@@ -93,7 +93,9 @@ All preset values use `lib.mkDefault` — override anything in your own config:
 programs.openclaw.instances.default.config.agents.defaults.model.primary = "anthropic/claude-opus-4-6";
 ```
 
-### 6. Multi-machine
+### 6. Multi-machine (optional)
+
+Only needed if you use OpenClaw from more than one device.
 
 ```nix
 # Desktop (always-on, runs the gateway)
@@ -189,8 +191,8 @@ The `openclaw-dm` namespace controls **team infrastructure only**. All OpenClaw 
 |--------|---------|-------------|
 | `enable` | `false` | Enable team infrastructure |
 | `tailscaleMachineName` | required | Your Tailscale hostname |
-| `role` | `"primary"` | `"primary"` / `"remote-personal"` / `"remote-server"` |
-| `primaryHost` | `""` | Primary's Tailscale name (required for remote roles) |
+| `role` | `"primary"` | `"primary"` = your main machine (default, works for single-machine). `"remote-personal"` / `"remote-server"` = connects to your primary. |
+| `primaryHost` | `""` | Tailscale name of your primary machine. Only needed for remote roles. |
 | `manageSopsSecrets` | `true` | Auto-configure sops-nix for team secrets |
 | `sharedWorkspace.enable` | `false` | Enable GDrive workspace sync |
 | `sharedWorkspace.interval` | `"5m"` | Sync interval |

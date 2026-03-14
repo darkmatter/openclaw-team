@@ -91,16 +91,22 @@ in {
       type = lib.types.enum [ "primary" "remote-personal" "remote-server" ];
       default = "primary";
       description = ''
-        primary         = runs gateway locally with Tailscale Funnel
-        remote-personal = personal device connecting to your primary
-        remote-server   = headless server connecting to a primary
+        primary         = the machine you work on. Runs its own gateway
+                          with Tailscale Funnel. This is the right choice
+                          for most people (including single-machine setups).
+        remote-personal = a second personal device (e.g. laptop) that
+                          connects to your primary's gateway.
+        remote-server   = a headless server that connects to your primary.
       '';
     };
 
     primaryHost = lib.mkOption {
       type = lib.types.str;
       default = "";
-      description = "Tailscale name of your primary gateway (required for remote roles).";
+      description = ''
+        Tailscale hostname of the machine running your primary gateway.
+        Only needed for remote-personal and remote-server roles.
+      '';
     };
 
     manageSopsSecrets = lib.mkOption {
