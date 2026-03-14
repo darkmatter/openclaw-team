@@ -1,16 +1,15 @@
 # Dark Matter OpenClaw team module
 #
-# Usage in your nix-darwin/home-manager config:
-#
-#   inputs.openclaw-team.url = "github:darkmatter/openclaw-team";
-#
-#   imports = [ openclaw-team.homeManagerModules.default ];
-#
+# Usage:
 #   openclaw-dm = {
 #     enable = true;
-#     hostId = "my-macbook";
-#     gateway.url = "wss://my-mac.tail12345.ts.net";
+#     tailscaleMachineName = "my-macbook";   # your Tailscale hostname
+#     role = "primary";                       # runs gateway locally
 #   };
+#
+#   # Multi-machine (desktop + laptop):
+#   # Desktop:  role = "primary";   tailscaleMachineName = "my-desktop";
+#   # Laptop:   role = "remote-personal"; primaryHost = "my-desktop";
 #
 { config, lib, pkgs, inputs ? {}, ... }:
 
@@ -19,6 +18,14 @@ let
 
   tailnet = "tail6277a6.ts.net";
   gatewayPort = 18789;
+
+  # Compute gateway URL from tailscale machine name
+  gatewayUrl = "wss://${cfg.tailscaleMachineName}.${tailnet}";
+
+  # For remote roles, compute the primary URL
+  primaryGatewayUrl =
+    if cfg.role == "primary" then gatewayUrl
+    else "wss://${cfg.primaryHost}.${tailnet}";
 
   models = {
     SONNET = "anthropic/claude-sonnet-4-6";
@@ -73,41 +80,50 @@ let
     workspace = "~/.openclaw/workspace";
   };
 
+  isPrimary = cfg.role == "primary";
+  isRemote = cfg.role == "remote-personal" || cfg.role == "remote-server";
+  isServer = cfg.role == "remote-server";
+
 in {
   options.openclaw-dm = {
     enable = lib.mkEnableOption "Dark Matter OpenClaw team config";
 
-    hostId = lib.mkOption {
+    tailscaleMachineName = lib.mkOption {
       type = lib.types.str;
-      description = "Unique identifier for this host";
-    };
-
-    gateway = {
-      url = lib.mkOption {
-        type = lib.types.str;
-        description = ''
-          WebSocket URL of your primary gateway.
-          If role=primary, this is YOUR Tailscale Funnel URL (e.g. wss://my-mac.tail12345.ts.net).
-          If role=remote, this is the URL you're connecting TO.
-        '';
-        example = "wss://my-mac-studio.tail6277a6.ts.net";
-      };
-
-      port = lib.mkOption {
-        type = lib.types.port;
-        default = gatewayPort;
-        description = "Gateway port";
-      };
+      description = ''
+        Your Tailscale machine hostname (as shown in `tailscale status`).
+        Used to compute the gateway URL: wss://<name>.${tailnet}
+      '';
+      example = "coopers-mac-studio";
     };
 
     role = lib.mkOption {
-      type = lib.types.enum [ "primary" "remote" ];
+      type = lib.types.enum [ "primary" "remote-personal" "remote-server" ];
       default = "primary";
       description = ''
-        primary = runs the gateway locally with Tailscale Funnel.
-                  Each team member runs their own primary gateway.
-        remote  = connects to another machine's gateway (e.g. laptop → desktop).
+        primary         = runs the gateway locally with Tailscale Funnel.
+                          This is the main machine you work from.
+        remote-personal = connects to your primary gateway from another
+                          personal device (e.g. laptop → desktop).
+        remote-server   = headless server that connects to a primary gateway.
+                          No interactive features, optimized for CI/automation.
       '';
+    };
+
+    primaryHost = lib.mkOption {
+      type = lib.types.str;
+      default = "";
+      description = ''
+        Tailscale machine name of your primary gateway.
+        Only used when role is remote-personal or remote-server.
+      '';
+      example = "my-mac-studio";
+    };
+
+    gateway.port = lib.mkOption {
+      type = lib.types.port;
+      default = gatewayPort;
+      description = "Gateway port";
     };
 
     model = lib.mkOption {
@@ -169,30 +185,19 @@ in {
         type = lib.types.str;
         default = "";
         example = "s3:darkmatter-openclaw/shared";
-        description = ''
-          rclone remote path for the shared workspace.
-          Examples:
-            s3:my-bucket/openclaw-shared
-            dropbox:openclaw/shared
-            gdrive:openclaw-shared
-          Configure the remote with `rclone config` first.
-        '';
+        description = "rclone remote path for the shared workspace.";
       };
 
       interval = lib.mkOption {
         type = lib.types.str;
         default = "5m";
-        description = "Sync interval (systemd timer format)";
+        description = "Sync interval";
       };
 
       direction = lib.mkOption {
         type = lib.types.enum [ "bisync" "pull" "push" ];
         default = "bisync";
-        description = ''
-          bisync = two-way sync (changes propagate both directions)
-          pull   = remote → local only
-          push   = local → remote only
-        '';
+        description = "bisync = two-way; pull = remote→local; push = local→remote";
       };
     };
 
@@ -204,6 +209,13 @@ in {
   };
 
   config = lib.mkIf cfg.enable {
+    assertions = [
+      {
+        assertion = isRemote -> cfg.primaryHost != "";
+        message = "openclaw-dm.primaryHost is required when role is ${cfg.role}";
+      }
+    ];
+
     programs.openclaw = {
       instances.default = {
         enable = true;
@@ -246,26 +258,26 @@ in {
             };
             port = cfg.gateway.port;
           } // (
-            if cfg.role == "primary" then {
+            if isPrimary then {
               mode = "local";
               bind = "loopback";
               tailscale = { mode = "funnel"; resetOnExit = true; };
               remote = {
                 transport = "direct";
-                url = cfg.gateway.url;
+                url = gatewayUrl;
               } // lib.optionalAttrs (cfg.secrets.passwordPath != null) {
                 password = cfg.secrets.passwordPath;
               } // lib.optionalAttrs (cfg.secrets.tokenPath != null) {
                 token = cfg.secrets.tokenPath;
               };
-              controlUi.allowedOrigins = [ cfg.gateway.url ];
+              controlUi.allowedOrigins = [ gatewayUrl ];
             } else {
               mode = "remote";
               bind = "loopback";
               tailscale.mode = "off";
               remote = {
                 transport = "direct";
-                url = cfg.gateway.url;
+                url = primaryGatewayUrl;
               } // lib.optionalAttrs (cfg.secrets.passwordPath != null) {
                 password = cfg.secrets.passwordPath;
               } // lib.optionalAttrs (cfg.secrets.tokenPath != null) {
@@ -387,19 +399,12 @@ in {
 
             ${if cfg.sharedWorkspace.direction == "bisync" then ''
               ${pkgs.rclone}/bin/rclone bisync "$SHARED" "$REMOTE" \
-                --create-empty-src-dirs \
-                --resilient \
-                --recover \
-                --conflict-resolve newer \
-                --fix-case \
+                --create-empty-src-dirs --resilient --recover \
+                --conflict-resolve newer --fix-case \
                 2>&1 || {
-                  # First run needs --resync
                   ${pkgs.rclone}/bin/rclone bisync "$SHARED" "$REMOTE" \
-                    --create-empty-src-dirs \
-                    --resync \
-                    --conflict-resolve newer \
-                    --fix-case \
-                    2>&1
+                    --create-empty-src-dirs --resync \
+                    --conflict-resolve newer --fix-case 2>&1
                 }
             '' else if cfg.sharedWorkspace.direction == "pull" then ''
               ${pkgs.rclone}/bin/rclone sync "$REMOTE" "$SHARED" 2>&1
@@ -409,7 +414,6 @@ in {
           '';
         in [ "${syncScript}" ];
         StartInterval = let
-          # Parse interval string to seconds
           m = builtins.match "([0-9]+)m" cfg.sharedWorkspace.interval;
           s = builtins.match "([0-9]+)s" cfg.sharedWorkspace.interval;
           h = builtins.match "([0-9]+)h" cfg.sharedWorkspace.interval;
@@ -424,7 +428,6 @@ in {
       };
     };
 
-    # Linux: systemd user service + timer
     systemd.user.services.openclaw-shared-sync = lib.mkIf (cfg.sharedWorkspace.enable && pkgs.stdenv.isLinux) {
       Unit.Description = "Sync OpenClaw shared workspace via rclone";
       Service = {
@@ -435,21 +438,13 @@ in {
             SHARED="$HOME/.openclaw/workspace/shared"
             REMOTE="${cfg.sharedWorkspace.remote}"
             mkdir -p "$SHARED"
-
             ${if cfg.sharedWorkspace.direction == "bisync" then ''
               ${pkgs.rclone}/bin/rclone bisync "$SHARED" "$REMOTE" \
-                --create-empty-src-dirs \
-                --resilient \
-                --recover \
-                --conflict-resolve newer \
-                --fix-case \
-                2>&1 || {
+                --create-empty-src-dirs --resilient --recover \
+                --conflict-resolve newer --fix-case 2>&1 || {
                   ${pkgs.rclone}/bin/rclone bisync "$SHARED" "$REMOTE" \
-                    --create-empty-src-dirs \
-                    --resync \
-                    --conflict-resolve newer \
-                    --fix-case \
-                    2>&1
+                    --create-empty-src-dirs --resync \
+                    --conflict-resolve newer --fix-case 2>&1
                 }
             '' else if cfg.sharedWorkspace.direction == "pull" then ''
               ${pkgs.rclone}/bin/rclone sync "$REMOTE" "$SHARED" 2>&1

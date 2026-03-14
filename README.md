@@ -26,16 +26,10 @@ imports = [ inputs.openclaw-team.homeManagerModules.default ];
 ```nix
 openclaw-dm = {
   enable = true;
-  hostId = "my-macbook";
+  tailscaleMachineName = "my-macbook";  # your Tailscale hostname
 
-  # Your gateway's Tailscale Funnel URL
-  gateway.url = "wss://my-mac.tail6277a6.ts.net";
-
-  # role = "primary" by default — each person runs their own gateway
-  # Use "remote" if connecting to another machine (e.g. laptop → desktop)
-
-  # Optional: use a specific model (default: claude-sonnet-4-6)
-  # model = "anthropic/claude-opus-4-6";
+  # role = "primary" by default — runs gateway with Tailscale Funnel
+  # model = "anthropic/claude-opus-4-6";  # optional, default: sonnet
 };
 ```
 
@@ -45,17 +39,24 @@ For a multi-machine setup (e.g. desktop + laptop):
 # Desktop (always-on, runs the gateway)
 openclaw-dm = {
   enable = true;
-  hostId = "my-desktop";
+  tailscaleMachineName = "my-desktop";
   role = "primary";
-  gateway.url = "wss://my-desktop.tail6277a6.ts.net";
 };
 
-# Laptop (connects to desktop)
+# Laptop (connects to desktop's gateway)
 openclaw-dm = {
   enable = true;
-  hostId = "my-laptop";
-  role = "remote";
-  gateway.url = "wss://my-desktop.tail6277a6.ts.net";
+  tailscaleMachineName = "my-laptop";
+  role = "remote-personal";
+  primaryHost = "my-desktop";
+};
+
+# Headless server
+openclaw-dm = {
+  enable = true;
+  tailscaleMachineName = "my-server";
+  role = "remote-server";
+  primaryHost = "my-desktop";
 };
 ```
 
@@ -138,8 +139,9 @@ Configure the rclone remote first: `rclone config`
 |--------|---------|-------------|
 | `enable` | `false` | Enable OpenClaw |
 | `hostId` | required | Your machine identifier |
-| `role` | `"primary"` | `"primary"` = run your own gateway; `"remote"` = connect to another machine |
-| `gateway.url` | required | Your Tailscale Funnel URL (e.g. `wss://my-mac.tail6277a6.ts.net`) |
+| `tailscaleMachineName` | required | Your Tailscale hostname (from `tailscale status`) |
+| `role` | `"primary"` | `"primary"`, `"remote-personal"`, or `"remote-server"` |
+| `primaryHost` | `""` | Tailscale name of your primary (required for remote roles) |
 | `model` | `claude-sonnet-4-6` | Default model |
 | `enableCoder` | `true` | Include the coder agent |
 | `secrets.passwordPath` | `null` | Path to gateway password file |
