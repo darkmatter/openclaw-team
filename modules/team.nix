@@ -247,6 +247,8 @@ in {
   };
 
   config = lib.mkIf cfg.enable {
+    home.packages = [ pkgs.ssh-to-age ];
+
     assertions = [
       {
         assertion = isRemote -> cfg.primaryHost != "";
@@ -410,6 +412,31 @@ in {
         };
       };
     };
+
+    # Persist SSH host key as age private key for sops CLI usage
+    home.activation.sopsAgeFromHostKey = lib.hm.dag.entryBefore [ "sopsNix" ] ''
+      AGE_DIR="${if pkgs.stdenv.isDarwin
+        then "${config.home.homeDirectory}/Library/Application Support/sops/age"
+        else "${config.home.homeDirectory}/.config/sops/age"}"
+      AGE_KEYFILE="$AGE_DIR/keys.txt"
+      HOST_KEY="/etc/ssh/ssh_host_ed25519_key"
+      MARKER="# auto-converted from ssh host key"
+
+      if [[ -f "$HOST_KEY" ]] && command -v ssh-to-age >/dev/null 2>&1; then
+        mkdir -p "$AGE_DIR"
+        AGE_PRIVATE="$(ssh-to-age -private-key -i "$HOST_KEY" 2>/dev/null)" || true
+        if [[ -n "$AGE_PRIVATE" ]]; then
+          if ! grep -qF "$AGE_PRIVATE" "$AGE_KEYFILE" 2>/dev/null; then
+            {
+              echo ""
+              echo "$MARKER"
+              echo "$AGE_PRIVATE"
+            } >> "$AGE_KEYFILE"
+            chmod 600 "$AGE_KEYFILE"
+          fi
+        fi
+      fi
+    '';
 
     # Write API keys env file for the gateway service
     home.activation.openclawTeamEnv = lib.mkIf cfg.manageSopsSecrets (
