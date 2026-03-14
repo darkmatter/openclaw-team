@@ -1,39 +1,75 @@
 # Dark Matter OpenClaw Team Config
 
-Private repo for the Dark Matter team. Add this as a flake input to your nix-darwin repo to get a fully configured OpenClaw setup that connects to our Volt coding VMs.
+Private repo for the Dark Matter team. Add this as a flake input to your nix-darwin repo to get a fully configured OpenClaw setup with shared secrets and access to Volt coding VMs.
 
 ## Setup
 
 ### 1. Add to your flake inputs
 
 ```nix
+# Private repo — use SSH URL
 inputs.openclaw-team = {
-  url = "github:darkmatter/openclaw-team";
+  url = "git+ssh://git@github.com/darkmatter/openclaw-team.git";
+  inputs.nixpkgs.follows = "nixpkgs";
+};
+
+# Also need sops-nix for secrets
+inputs.sops-nix = {
+  url = "github:Mic92/sops-nix";
   inputs.nixpkgs.follows = "nixpkgs";
 };
 ```
 
-### 2. Import the module
+### 2. Import the modules
 
-In your home-manager config:
+In your home-manager imports:
 
 ```nix
-imports = [ inputs.openclaw-team.homeManagerModules.default ];
+imports = [
+  inputs.nix-openclaw.homeManagerModules.openclaw
+  inputs.sops-nix.homeManagerModules.sops
+  inputs.openclaw-team.homeManagerModules.default
+];
 ```
 
-### 3. Configure
+### 3. Enroll
+
+From a clone of this repo:
+
+```bash
+./scripts/enroll <your-github-username>
+```
+
+This:
+1. Reads your host's age key (from `/etc/ssh/ssh_host_ed25519_key`, or auto-generates one)
+2. Fetches your SSH keys from `github.com/<username>.keys` and converts to age
+3. Writes `keys/<username>.txt`
+4. Regenerates `.sops.yaml`
+5. Commits and pushes
+
+**GitHub Actions** automatically re-encrypts all secrets with the new key. Wait for the action to complete, then pull.
+
+### 4. Configure
 
 ```nix
 openclaw-dm = {
   enable = true;
   tailscaleMachineName = "my-macbook";  # your Tailscale hostname
-
-  # role = "primary" by default — runs gateway with Tailscale Funnel
-  # model = "anthropic/claude-opus-4-6";  # optional, default: sonnet
 };
 ```
 
-For a multi-machine setup (e.g. desktop + laptop):
+That's it. Override any OpenClaw setting directly:
+
+```nix
+# Team module sets sensible defaults with lib.mkDefault.
+# Override anything via programs.openclaw:
+programs.openclaw.instances.default.config = {
+  agents.defaults.model.primary = "anthropic/claude-opus-4-6";
+  # ... any openclaw config field
+};
+```
+
+### 5. Multi-machine
 
 ```nix
 # Desktop (always-on, runs the gateway)
@@ -60,23 +96,7 @@ openclaw-dm = {
 };
 ```
 
-### 4. Set up your age key
-
-You need an age identity that's listed in `.sops.yaml` so sops-nix can decrypt secrets at activation time.
-
-**If you already have an age key** (e.g. `~/.config/sops/age/keys.txt`), give Cooper your public key to add to `.sops.yaml`.
-
-**If you don't have one yet:**
-
-```bash
-mkdir -p ~/.config/sops/age
-age-keygen -o ~/.config/sops/age/keys.txt
-# Give Cooper the public key line from the output
-```
-
-Once your key is in `.sops.yaml`, the GitHub Action will automatically re-encrypt all secrets so you can decrypt them.
-
-### 5. Apply
+### 6. Apply
 
 ```bash
 darwin-rebuild switch --flake .
@@ -84,88 +104,90 @@ darwin-rebuild switch --flake .
 
 ## What You Get
 
-- **Main agent** — your primary AI assistant
-- **Coder agent** — dedicated coding agent
-- **ACP access to Volt VMs** — `volt-1` through `volt-4` on our Hetzner runner (64 cores, 128GB RAM)
-- **Gateway config** — each member runs their own primary gateway via Tailscale Funnel
-- **acpx config** — automatically written to `~/.acpx/config.json`
-- **Auto-decrypted secrets** — gateway password and Volt token via sops-nix (no manual token files)
-
-## Shared Workspace (Google Drive)
-
-The team workspace syncs via Google Drive using a service account — **no per-user setup needed**.
-
-```nix
-openclaw-dm = {
-  enable = true;
-  # ...
-
-  sharedWorkspace = {
-    enable = true;
-    folderId = "1ABCxyz...";  # shared GDrive folder ID
-    # interval = "5m";        # default
-    # direction = "bisync";   # default: two-way sync
-  };
-};
-```
-
-The service account key is stored in `secrets/gdrive-sa-key.yaml` (sops-encrypted). rclone is auto-configured at activation time.
-
-**Workspace layout:**
-
-```
-~/.openclaw/workspace/
-├── shared/              ← GDrive-synced across team
-│   ├── skills/          ← team skills
-│   ├── team-wiki/       ← shared knowledge base
-│   ├── memory/          ← team memory
-│   └── TOOLS.md         ← shared tool notes
-├── IDENTITY.md          ← personal (your agent's name/emoji)
-├── USER.md              ← personal (about you)
-├── SOUL.md              ← personal (agent personality)
-└── HEARTBEAT.md         ← personal (background tasks)
-```
+- **Gateway config** — Tailscale Funnel, password auth, auto-configured
+- **ACP access to Volt VMs** — `volt-1` through `volt-4` (64 cores, 128GB RAM)
+- **acpx config** — auto-written to `~/.acpx/config.json`
+- **Auto-decrypted secrets** — API keys (Anthropic, OpenAI, OpenRouter), gateway password, Volt token
+- **SSH host key → age** — auto-persisted at activation for sops CLI usage
 
 ## Enrolling a Team Member
 
 ```bash
-# Run from the repo root:
 ./scripts/enroll <github-username> [key-label]
 ```
 
-This will:
-1. Read the host's age public key (from sops-nix or SSH key)
-2. Fetch SSH keys from `github.com/<username>.keys` and convert to age
-3. Write keys to `keys/<label>.txt`
-4. Regenerate `.sops.yaml` with all enrolled keys
-5. Commit and push → GitHub Actions re-encrypts all secrets
+The enrollment script collects age public keys and pushes to the repo. **GitHub Actions handles the rest** — the `update-keys` workflow:
 
-## Adding a Team Member
+1. Triggers on any push that changes `.sops.yaml`
+2. Decrypts all secrets using the GitHub Actions age key
+3. Re-encrypts with the updated key list
+4. Commits the re-encrypted files
 
-1. Get their age public key (or SSH ed25519 public key)
-2. Add it to `.sops.yaml` under `keys:` and in `creation_rules`
-3. Commit and push — the GitHub Action re-encrypts all secrets automatically
-4. They pull, run `darwin-rebuild switch`, done
+The new member just needs to `git pull` after the action completes, then `darwin-rebuild switch`.
+
+### Manual key rotation
+
+If you need to re-encrypt outside of enrollment:
+
+```bash
+# Edit .sops.yaml manually, then:
+git add .sops.yaml && git commit -m "update keys" && git push
+# GitHub Actions will re-encrypt automatically
+```
+
+## Shared Workspace (Google Drive)
+
+Syncs a `shared/` subdirectory via Google Drive using a service account — **no per-user setup needed**.
+
+```nix
+openclaw-dm.sharedWorkspace.enable = true;
+```
+
+Uses the `darkmatter` Shared Drive. Service account key is sops-encrypted. rclone is auto-configured at activation.
+
+```
+~/.openclaw/workspace/
+├── shared/              ← GDrive-synced across team
+│   ├── skills/
+│   ├── team-wiki/
+│   └── memory/
+├── IDENTITY.md          ← personal
+├── USER.md              ← personal
+├── SOUL.md              ← personal
+└── HEARTBEAT.md         ← personal
+```
 
 ## Options
 
+The `openclaw-dm` namespace controls **team infrastructure only**. All OpenClaw config is set via `programs.openclaw` (with `lib.mkDefault` so you can override anything).
+
 | Option | Default | Description |
 |--------|---------|-------------|
-| `enable` | `false` | Enable OpenClaw |
-| `hostId` | required | Your machine identifier |
-| `tailscaleMachineName` | required | Your Tailscale hostname (from `tailscale status`) |
-| `role` | `"primary"` | `"primary"`, `"remote-personal"`, or `"remote-server"` |
-| `primaryHost` | `""` | Tailscale name of your primary (required for remote roles) |
-| `model` | `claude-sonnet-4-6` | Default model |
-| `enableCoder` | `true` | Include the coder agent |
-| `secrets.passwordPath` | `null` | Path to gateway password file |
-| `secrets.tokenPath` | `null` | Path to gateway token file |
-| `secrets.voltPasswordPath` | `null` | Path to Volt VM password |
-| `extraConfig` | `{}` | Merge extra config into openclaw.json |
+| `enable` | `false` | Enable team infrastructure |
+| `tailscaleMachineName` | required | Your Tailscale hostname |
+| `role` | `"primary"` | `"primary"` / `"remote-personal"` / `"remote-server"` |
+| `primaryHost` | `""` | Primary's Tailscale name (required for remote roles) |
+| `manageSopsSecrets` | `true` | Auto-configure sops-nix for team secrets |
+| `sharedWorkspace.enable` | `false` | Enable GDrive workspace sync |
+| `sharedWorkspace.interval` | `"5m"` | Sync interval |
+| `sharedWorkspace.direction` | `"bisync"` | `bisync` / `pull` / `push` |
+
+## Secrets
+
+All secrets are sops-encrypted (one per file) and auto-decrypted by sops-nix at activation:
+
+| Secret | File | Used for |
+|--------|------|----------|
+| Gateway password | `secrets/gateway-password.yaml` | OpenClaw gateway auth |
+| Volt password | `secrets/volt-gateway-password.yaml` | ACP access to Volt VMs |
+| Anthropic API key | `secrets/anthropic-api-key.yaml` | LLM provider |
+| OpenAI API key | `secrets/openai-api-key.yaml` | LLM provider |
+| OpenRouter API key | `secrets/openrouter-api-key.yaml` | LLM provider |
+| GDrive SA key | `secrets/gdrive-sa-key.yaml` | Shared workspace sync |
+
+Key rotation is handled by GitHub Actions — just update `.sops.yaml` and push.
 
 ## Architecture
-
-Each team member runs their own OpenClaw gateway with Tailscale Funnel. Everyone shares access to the Volt coding VMs.
 
 ```
 ┌─────────────────────────┐    ┌─────────────────────────┐
@@ -183,11 +205,4 @@ Each team member runs their own OpenClaw gateway with Tailscale Funnel. Everyone
    │  volt-1..4.tail6277a6.ts.net                │
    │  64 cores / 128GB RAM                       │
    └─────────────────────────────────────────────┘
-```
-
-For multi-machine users (e.g. desktop + laptop):
-
-```
-Desktop (primary)  ◄── Laptop (remote)
-wss://desktop.ts.net    connects via Tailscale
 ```
