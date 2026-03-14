@@ -69,7 +69,31 @@ programs.openclaw.instances.default.config = {
 };
 ```
 
-### 5. Multi-machine
+### 5. Pick a preset (optional)
+
+Presets give you a pre-built agent + config setup. Import one alongside the team module:
+
+```nix
+imports = [
+  inputs.openclaw-team.homeManagerModules.default
+  inputs.openclaw-team.presets.developer    # or: minimal, multi-agent
+];
+```
+
+| Preset | Agents | What it sets |
+|--------|--------|--------------|
+| `minimal` | main | Single agent, basic tools. Clean starting point. |
+| `developer` | main + coder | Coding agent pair. Good for solo devs. |
+| `multi-agent` | main + assistant + coder | Channel routing, TTS, messaging plugins. Full setup. |
+
+All preset values use `lib.mkDefault` — override anything in your own config:
+
+```nix
+# Use developer preset but switch to opus
+programs.openclaw.instances.default.config.agents.defaults.model.primary = "anthropic/claude-opus-4-6";
+```
+
+### 6. Multi-machine
 
 ```nix
 # Desktop (always-on, runs the gateway)
@@ -96,7 +120,7 @@ openclaw-dm = {
 };
 ```
 
-### 6. Apply
+### 7. Apply
 
 ```bash
 darwin-rebuild switch --flake .

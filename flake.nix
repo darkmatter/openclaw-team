@@ -31,6 +31,13 @@
     # Home-manager module — import this in your darwin config
     homeManagerModules.default = ./modules/team.nix;
 
+    # Presets — import alongside the team module for pre-built configs
+    presets = {
+      minimal = ./presets/minimal.nix;        # single agent, basic tools
+      developer = ./presets/developer.nix;    # main + coder, ACP
+      multi-agent = ./presets/multi-agent.nix; # multi-agent, channels, TTS
+    };
+
     # Re-export for convenience
     overlays.default = openclaw-nix.overlays.default;
     nixosModules = openclaw-nix.nixosModules;
