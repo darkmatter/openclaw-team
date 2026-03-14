@@ -429,26 +429,46 @@ in {
         mkdir -p "$HOME/.openclaw/workspace/shared"
         mkdir -p "$HOME/.config/rclone"
 
-        # Write SA key JSON from sops secret
+        # Convert sops-decrypted YAML SA key to JSON for rclone
         SA_KEY_PATH="$HOME/.config/openclaw-gdrive-sa.json"
-        if [[ -f "${config.sops.secrets.openclaw-gdrive-sa-key.path}" ]]; then
-          cp "${config.sops.secrets.openclaw-gdrive-sa-key.path}" "$SA_KEY_PATH"
+        SA_SOPS_PATH="${config.sops.secrets.openclaw-gdrive-sa-key.path}"
+        if [[ -f "$SA_SOPS_PATH" ]]; then
+          ${pkgs.python3}/bin/python3 -c "
+import yaml, json, sys
+with open('$SA_SOPS_PATH') as f:
+    data = yaml.safe_load(f)
+# Remove sops metadata if present
+data.pop('sops', None)
+with open('$SA_KEY_PATH', 'w') as f:
+    json.dump(data, f, indent=2)
+" 2>/dev/null || {
+            # Fallback: if it's already JSON, just copy
+            cp "$SA_SOPS_PATH" "$SA_KEY_PATH"
+          }
           chmod 600 "$SA_KEY_PATH"
         fi
 
         # Generate rclone config for the team drive
         RCLONE_CONF="$HOME/.config/rclone/rclone.conf"
-        # Remove old team-workspace section if present, then append
+        # Remove old openclaw-team section if present
         if [[ -f "$RCLONE_CONF" ]]; then
-          ${pkgs.gnused}/bin/sed -i '/^\[openclaw-team\]/,/^\[/{ /^\[openclaw-team\]/d; /^\[/!d; }' "$RCLONE_CONF"
+          ${pkgs.python3}/bin/python3 -c "
+import re, sys
+with open('$RCLONE_CONF') as f:
+    content = f.read()
+content = re.sub(r'\[openclaw-team\][^\[]*', '', content)
+with open('$RCLONE_CONF', 'w') as f:
+    f.write(content.strip() + '\n')
+" 2>/dev/null || true
         fi
         cat >> "$RCLONE_CONF" <<EOF
-        [openclaw-team]
-        type = drive
-        scope = drive
-        service_account_file = $SA_KEY_PATH
-        root_folder_id = ${cfg.sharedWorkspace.folderId}
-        EOF
+
+[openclaw-team]
+type = drive
+scope = drive
+service_account_file = $SA_KEY_PATH
+root_folder_id = ${cfg.sharedWorkspace.folderId}
+EOF
       ''
     );
 
