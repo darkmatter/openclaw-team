@@ -9,17 +9,14 @@
 #   openclaw-dm = {
 #     enable = true;
 #     hostId = "my-macbook";
+#     gateway.url = "wss://my-mac.tail12345.ts.net";
 #   };
-#
-# That's it. The gateway URL, auth, agents, and ACP are all pre-configured.
 #
 { config, lib, pkgs, inputs ? {}, ... }:
 
 let
   cfg = config.openclaw-dm;
 
-  # Team-wide constants
-  primaryUrl = "wss://coopers-mac-studio.tail6277a6.ts.net";
   tailnet = "tail6277a6.ts.net";
   gatewayPort = 18789;
 
@@ -85,10 +82,32 @@ in {
       description = "Unique identifier for this host";
     };
 
+    gateway = {
+      url = lib.mkOption {
+        type = lib.types.str;
+        description = ''
+          WebSocket URL of your primary gateway.
+          If role=primary, this is YOUR Tailscale Funnel URL (e.g. wss://my-mac.tail12345.ts.net).
+          If role=remote, this is the URL you're connecting TO.
+        '';
+        example = "wss://my-mac-studio.tail6277a6.ts.net";
+      };
+
+      port = lib.mkOption {
+        type = lib.types.port;
+        default = gatewayPort;
+        description = "Gateway port";
+      };
+    };
+
     role = lib.mkOption {
       type = lib.types.enum [ "primary" "remote" ];
-      default = "remote";
-      description = "primary = runs gateway with Funnel; remote = connects to primary";
+      default = "primary";
+      description = ''
+        primary = runs the gateway locally with Tailscale Funnel.
+                  Each team member runs their own primary gateway.
+        remote  = connects to another machine's gateway (e.g. laptop → desktop).
+      '';
     };
 
     model = lib.mkOption {
@@ -187,7 +206,7 @@ in {
             } // lib.optionalAttrs (cfg.secrets.passwordPath != null) {
               password = cfg.secrets.passwordPath;
             };
-            port = gatewayPort;
+            port = cfg.gateway.port;
           } // (
             if cfg.role == "primary" then {
               mode = "local";
@@ -195,20 +214,20 @@ in {
               tailscale = { mode = "funnel"; resetOnExit = true; };
               remote = {
                 transport = "direct";
-                url = primaryUrl;
+                url = cfg.gateway.url;
               } // lib.optionalAttrs (cfg.secrets.passwordPath != null) {
                 password = cfg.secrets.passwordPath;
               } // lib.optionalAttrs (cfg.secrets.tokenPath != null) {
                 token = cfg.secrets.tokenPath;
               };
-              controlUi.allowedOrigins = [ primaryUrl ];
+              controlUi.allowedOrigins = [ cfg.gateway.url ];
             } else {
               mode = "remote";
               bind = "loopback";
               tailscale.mode = "off";
               remote = {
                 transport = "direct";
-                url = primaryUrl;
+                url = cfg.gateway.url;
               } // lib.optionalAttrs (cfg.secrets.passwordPath != null) {
                 password = cfg.secrets.passwordPath;
               } // lib.optionalAttrs (cfg.secrets.tokenPath != null) {
