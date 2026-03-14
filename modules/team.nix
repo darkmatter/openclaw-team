@@ -13,7 +13,7 @@
 #
 # That's it. The gateway URL, auth, agents, and ACP are all pre-configured.
 #
-{ config, lib, pkgs, ... }:
+{ config, lib, pkgs, inputs ? {}, ... }:
 
 let
   cfg = config.openclaw-dm;
@@ -106,8 +106,11 @@ in {
     secrets = {
       passwordPath = lib.mkOption {
         type = lib.types.nullOr lib.types.str;
-        default = null;
-        description = "Path to decrypted gateway password (agenix/sops-nix)";
+        default = if config.sops.secrets ? "openclaw-gateway-password"
+          then config.sops.secrets.openclaw-gateway-password.path
+          else null;
+        defaultText = lib.literalExpression "sops-decrypted gateway_password";
+        description = "Path to decrypted gateway password (auto-set from sops-nix)";
       };
       tokenPath = lib.mkOption {
         type = lib.types.nullOr lib.types.str;
@@ -116,9 +119,24 @@ in {
       };
       voltPasswordPath = lib.mkOption {
         type = lib.types.nullOr lib.types.str;
-        default = null;
-        description = "Path to decrypted Volt VM password for ACP (agenix/sops-nix)";
+        default = if config.sops.secrets ? "openclaw-volt-password"
+          then config.sops.secrets.openclaw-volt-password.path
+          else null;
+        defaultText = lib.literalExpression "sops-decrypted volt_gateway_password";
+        description = "Path to decrypted Volt VM password for ACP (auto-set from sops-nix)";
       };
+    };
+
+    manageSopsSecrets = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = "Auto-configure sops-nix to decrypt team secrets";
+    };
+
+    sopsIdentityPaths = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [];
+      description = "Extra age/ssh identity paths for sops-nix decryption";
     };
 
     extraConfig = lib.mkOption {
@@ -240,6 +258,30 @@ in {
           env.shellEnv.enabled = true;
           session.dmScope = "per-channel-peer";
         }) cfg.extraConfig;
+      };
+    };
+
+    # sops-nix: decrypt team secrets automatically
+    sops = lib.mkIf cfg.manageSopsSecrets {
+      age = {
+        sshKeyPaths = [
+          "/etc/ssh/ssh_host_ed25519_key"
+          "${config.home.homeDirectory}/.ssh/id_ed25519"
+        ] ++ cfg.sopsIdentityPaths;
+        keyFile = "${config.home.homeDirectory}/.config/sops/age/keys.txt";
+        generateKey = false;
+      };
+
+      secrets = {
+        openclaw-gateway-password = {
+          sopsFile = ../secrets/openclaw-team.yaml;
+          key = "gateway_password";
+        };
+        openclaw-volt-password = {
+          sopsFile = ../secrets/openclaw-team.yaml;
+          key = "volt_gateway_password";
+          path = "${config.home.homeDirectory}/.config/volt/token";
+        };
       };
     };
 

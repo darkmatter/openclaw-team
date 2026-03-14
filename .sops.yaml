@@ -1,0 +1,36 @@
+keys:
+  # --- Admin ---
+  - &cooper age1psa52j93p0t7rej4lyzeww6hzg9hh4ylxu6v30tcgag44apw8als2xg3ef
+
+  # --- GitHub Actions (can re-encrypt when team changes) ---
+  - &github_actions age1tppj4vwjyt24xulxr7ecmqlwd2q7wjzrdxgm5zqreayyw69rdaes542hjr
+
+  # --- Hosts ---
+  - &mac_studio ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFauRe+VXvSmsca73hmxrylRPiueX/aHbXUu1jz7kGB8
+  - &mac_studio_age age1vu3d4chajf4ggdrd5vtpqly7afdfqaujmzezajj338vuuewu43sq9uc9xv
+  - &macpro ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAfq2E5K5r1lVDVUHTVjDnM5eA3yOgHUhKGv5/OmhTJI
+  - &macpro_age age1cr3cljq89aarfjn0qyefxtq55tgsepa320xlczrddn8ty6gv837s8jp0y9
+  - &hel_slate ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKYjm1v7LilFwgZmWQyEFnK5PSpcHAObZ/JeP+64010g
+  - &nixos_age age13mn4c0kc5q0k4p938hfm433ryy9fp7dywt73g8v3n36q9g5ntszquv67nr
+  - &mbp_host age1g9ksg6almd4yv708d3cu8pzhvtr70c4x6re4v4s8x9xszmhyxsys2sgkgs
+
+  # --- Team Members ---
+  # Add team member age/ssh public keys here.
+  # After adding, run: sops updatekeys secrets/
+  # Or let the GitHub Action re-encrypt on push.
+  # - &alice age1...
+  # - &bob ssh-ed25519 AAAA...
+
+creation_rules:
+  - path_regex: secrets/.*\.yaml$
+    key_groups:
+      - age:
+          - *cooper
+          - *github_actions
+          - *mac_studio_age
+          - *macpro_age
+          - *nixos_age
+          - *mbp_host
+          # Uncomment as team members are added:
+          # - *alice
+          # - *bob

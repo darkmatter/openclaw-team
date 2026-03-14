@@ -36,17 +36,21 @@ openclaw-dm = {
 };
 ```
 
-### 4. Save the Volt password
+### 4. Set up your age key
 
-The Volt VM password needs to be at `~/.config/volt/token`. Ask Cooper for the value, then:
+You need an age identity that's listed in `.sops.yaml` so sops-nix can decrypt secrets at activation time.
+
+**If you already have an age key** (e.g. `~/.config/sops/age/keys.txt`), give Cooper your public key to add to `.sops.yaml`.
+
+**If you don't have one yet:**
 
 ```bash
-mkdir -p ~/.config/volt
-echo -n '<password>' > ~/.config/volt/token
-chmod 600 ~/.config/volt/token
+mkdir -p ~/.config/sops/age
+age-keygen -o ~/.config/sops/age/keys.txt
+# Give Cooper the public key line from the output
 ```
 
-Or manage it with agenix/sops-nix and symlink it.
+Once your key is in `.sops.yaml`, the GitHub Action will automatically re-encrypt all secrets so you can decrypt them.
 
 ### 5. Apply
 
@@ -61,6 +65,14 @@ darwin-rebuild switch --flake .
 - **ACP access to Volt VMs** — `volt-1` through `volt-4` on our Hetzner runner (64 cores, 128GB RAM)
 - **Pre-configured gateway** — connects to Cooper's Mac Studio via Tailscale Funnel
 - **acpx config** — automatically written to `~/.acpx/config.json`
+- **Auto-decrypted secrets** — gateway password and Volt token via sops-nix (no manual token files)
+
+## Adding a Team Member
+
+1. Get their age public key (or SSH ed25519 public key)
+2. Add it to `.sops.yaml` under `keys:` and in `creation_rules`
+3. Commit and push — the GitHub Action re-encrypts all secrets automatically
+4. They pull, run `darwin-rebuild switch`, done
 
 ## Options
 
