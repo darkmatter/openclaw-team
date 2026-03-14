@@ -293,16 +293,42 @@ in {
 
       secrets = {
         openclaw-gateway-password = {
-          sopsFile = ../secrets/openclaw-team.yaml;
+          sopsFile = ../secrets/gateway-password.yaml;
           key = "gateway_password";
         };
         openclaw-volt-password = {
-          sopsFile = ../secrets/openclaw-team.yaml;
+          sopsFile = ../secrets/volt-gateway-password.yaml;
           key = "volt_gateway_password";
           path = "${config.home.homeDirectory}/.config/volt/token";
         };
+        openclaw-anthropic-api-key = {
+          sopsFile = ../secrets/anthropic-api-key.yaml;
+          key = "anthropic_api_key";
+        };
+        openclaw-openai-api-key = {
+          sopsFile = ../secrets/openai-api-key.yaml;
+          key = "openai_api_key";
+        };
+        openclaw-openrouter-api-key = {
+          sopsFile = ../secrets/openrouter-api-key.yaml;
+          key = "openrouter_api_key";
+        };
       };
     };
+
+    # Write API keys env file for the gateway service
+    home.activation.openclawTeamEnv = lib.mkIf cfg.manageSopsSecrets (
+      lib.hm.dag.entryAfter [ "sopsNix" ] ''
+        _envFile="$HOME/.openclaw/env.team"
+        mkdir -p "$(dirname "$_envFile")"
+        {
+          echo "ANTHROPIC_API_KEY=$(cat ${config.sops.secrets.openclaw-anthropic-api-key.path} 2>/dev/null)"
+          echo "OPENAI_API_KEY=$(cat ${config.sops.secrets.openclaw-openai-api-key.path} 2>/dev/null)"
+          echo "OPENROUTER_API_KEY=$(cat ${config.sops.secrets.openclaw-openrouter-api-key.path} 2>/dev/null)"
+        } > "$_envFile"
+        chmod 600 "$_envFile"
+      ''
+    );
 
     # acpx agent config — maps volt-N to openclaw ACP bridges
     home.file.".acpx/config.json".text = builtins.toJSON {

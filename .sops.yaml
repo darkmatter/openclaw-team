@@ -23,14 +23,14 @@ keys:
 
 creation_rules:
   - path_regex: secrets/.*\.yaml$
-    key_groups:
-      - age:
-          - *cooper
-          - *github_actions
-          - *mac_studio_age
-          - *macpro_age
-          - *nixos_age
-          - *mbp_host
-          # Uncomment as team members are added:
-          # - *alice
-          # - *bob
+    age:
+      - *cooper
+      - *github_actions
+      - *mac_studio_age
+      - *macpro_age
+      - *nixos_age
+      - *mbp_host
+      # Add team member keys here, then push.
+      # GitHub Actions will re-encrypt automatically.
+      # - *alice
+      # - *bob
