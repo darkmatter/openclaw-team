@@ -1,0 +1,11 @@
+# cooper — enrolled 2026-03-14T19:16:00Z
+# GitHub: coopermaruyama
+
+# Personal age key
+age1psa52j93p0t7rej4lyzeww6hzg9hh4ylxu6v30tcgag44apw8als2xg3ef
+
+# Host keys
+age1vu3d4chajf4ggdrd5vtpqly7afdfqaujmzezajj338vuuewu43sq9uc9xv
+age1cr3cljq89aarfjn0qyefxtq55tgsepa320xlczrddn8ty6gv837s8jp0y9
+age13mn4c0kc5q0k4p938hfm433ryy9fp7dywt73g8v3n36q9g5ntszquv67nr
+age1g9ksg6almd4yv708d3cu8pzhvtr70c4x6re4v4s8x9xszmhyxsys2sgkgs

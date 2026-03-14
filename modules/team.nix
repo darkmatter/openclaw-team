@@ -84,6 +84,39 @@ let
   isRemote = cfg.role == "remote-personal" || cfg.role == "remote-server";
   isServer = cfg.role == "remote-server";
 
+  # Shared workspace sync helpers
+  syncScript = pkgs.writeShellScript "openclaw-shared-sync" ''
+    set -euo pipefail
+    SHARED="$HOME/.openclaw/workspace/shared"
+    REMOTE="openclaw-team:"
+    mkdir -p "$SHARED"
+
+    ${if cfg.sharedWorkspace.direction == "bisync" then ''
+      ${pkgs.rclone}/bin/rclone bisync "$SHARED" "$REMOTE" \
+        --create-empty-src-dirs --resilient --recover \
+        --conflict-resolve newer --fix-case \
+        2>&1 || {
+          ${pkgs.rclone}/bin/rclone bisync "$SHARED" "$REMOTE" \
+            --create-empty-src-dirs --resync \
+            --conflict-resolve newer --fix-case 2>&1
+        }
+    '' else if cfg.sharedWorkspace.direction == "pull" then ''
+      ${pkgs.rclone}/bin/rclone sync "$REMOTE" "$SHARED" 2>&1
+    '' else ''
+      ${pkgs.rclone}/bin/rclone sync "$SHARED" "$REMOTE" 2>&1
+    ''}
+  '';
+
+  syncIntervalSeconds = let
+    m = builtins.match "([0-9]+)m" cfg.sharedWorkspace.interval;
+    s = builtins.match "([0-9]+)s" cfg.sharedWorkspace.interval;
+    h = builtins.match "([0-9]+)h" cfg.sharedWorkspace.interval;
+  in
+    if m != null then (lib.toInt (builtins.head m)) * 60
+    else if s != null then lib.toInt (builtins.head s)
+    else if h != null then (lib.toInt (builtins.head h)) * 3600
+    else 300;
+
 in {
   options.openclaw-dm = {
     enable = lib.mkEnableOption "Dark Matter OpenClaw team config";
@@ -178,14 +211,17 @@ in {
       enable = lib.mkOption {
         type = lib.types.bool;
         default = false;
-        description = "Sync a shared/ subdirectory in the workspace via rclone";
+        description = "Sync a shared/ subdirectory in the workspace via rclone (Google Drive)";
       };
 
-      remote = lib.mkOption {
+      folderId = lib.mkOption {
         type = lib.types.str;
-        default = "";
-        example = "s3:darkmatter-openclaw/shared";
-        description = "rclone remote path for the shared workspace.";
+        default = "12VTEdvFB6CyoGvrbWsVhUGqPMy_S2j6X";
+        description = ''
+          Google Drive folder ID for the shared workspace.
+          Default: "OpenClaw Team Workspace" folder in darkmatter.io Drive.
+          The folder must be shared with the service account email.
+        '';
       };
 
       interval = lib.mkOption {
@@ -363,6 +399,11 @@ in {
           sopsFile = ../secrets/openrouter-api-key.yaml;
           key = "openrouter_api_key";
         };
+      } // lib.optionalAttrs cfg.sharedWorkspace.enable {
+        openclaw-gdrive-sa-key = {
+          sopsFile = ../secrets/gdrive-sa-key.yaml;
+          key = "gdrive_sa_key_json";
+        };
       };
     };
 
@@ -380,48 +421,40 @@ in {
       ''
     );
 
-    # Shared workspace sync via rclone
+    # Shared workspace: auto-configure rclone for GDrive using service account
     home.activation.openclawSharedWorkspace = lib.mkIf cfg.sharedWorkspace.enable (
-      lib.hm.dag.entryAfter [ "linkGeneration" ] ''
+      lib.hm.dag.entryAfter [ "sopsNix" "linkGeneration" ] ''
         mkdir -p "$HOME/.openclaw/workspace/shared"
+        mkdir -p "$HOME/.config/rclone"
+
+        # Write SA key JSON from sops secret
+        SA_KEY_PATH="$HOME/.config/openclaw-gdrive-sa.json"
+        if [[ -f "${config.sops.secrets.openclaw-gdrive-sa-key.path}" ]]; then
+          cp "${config.sops.secrets.openclaw-gdrive-sa-key.path}" "$SA_KEY_PATH"
+          chmod 600 "$SA_KEY_PATH"
+        fi
+
+        # Generate rclone config for the team drive
+        RCLONE_CONF="$HOME/.config/rclone/rclone.conf"
+        # Remove old team-workspace section if present, then append
+        if [[ -f "$RCLONE_CONF" ]]; then
+          ${pkgs.gnused}/bin/sed -i '/^\[openclaw-team\]/,/^\[/{ /^\[openclaw-team\]/d; /^\[/!d; }' "$RCLONE_CONF"
+        fi
+        cat >> "$RCLONE_CONF" <<EOF
+        [openclaw-team]
+        type = drive
+        scope = drive
+        service_account_file = $SA_KEY_PATH
+        root_folder_id = ${cfg.sharedWorkspace.folderId}
+        EOF
       ''
     );
 
     launchd.agents.openclaw-shared-sync = lib.mkIf (cfg.sharedWorkspace.enable && pkgs.stdenv.isDarwin) {
       enable = true;
       config = {
-        ProgramArguments = let
-          syncScript = pkgs.writeShellScript "openclaw-shared-sync" ''
-            set -euo pipefail
-            SHARED="$HOME/.openclaw/workspace/shared"
-            REMOTE="${cfg.sharedWorkspace.remote}"
-            mkdir -p "$SHARED"
-
-            ${if cfg.sharedWorkspace.direction == "bisync" then ''
-              ${pkgs.rclone}/bin/rclone bisync "$SHARED" "$REMOTE" \
-                --create-empty-src-dirs --resilient --recover \
-                --conflict-resolve newer --fix-case \
-                2>&1 || {
-                  ${pkgs.rclone}/bin/rclone bisync "$SHARED" "$REMOTE" \
-                    --create-empty-src-dirs --resync \
-                    --conflict-resolve newer --fix-case 2>&1
-                }
-            '' else if cfg.sharedWorkspace.direction == "pull" then ''
-              ${pkgs.rclone}/bin/rclone sync "$REMOTE" "$SHARED" 2>&1
-            '' else ''
-              ${pkgs.rclone}/bin/rclone sync "$SHARED" "$REMOTE" 2>&1
-            ''}
-          '';
-        in [ "${syncScript}" ];
-        StartInterval = let
-          m = builtins.match "([0-9]+)m" cfg.sharedWorkspace.interval;
-          s = builtins.match "([0-9]+)s" cfg.sharedWorkspace.interval;
-          h = builtins.match "([0-9]+)h" cfg.sharedWorkspace.interval;
-        in
-          if m != null then (lib.toInt (builtins.head m)) * 60
-          else if s != null then lib.toInt (builtins.head s)
-          else if h != null then (lib.toInt (builtins.head h)) * 3600
-          else 300;
+        ProgramArguments = [ "${syncScript}" ];
+        StartInterval = syncIntervalSeconds;
         StandardOutPath = "/tmp/openclaw-shared-sync.log";
         StandardErrorPath = "/tmp/openclaw-shared-sync.log";
         RunAtLoad = true;
@@ -429,30 +462,10 @@ in {
     };
 
     systemd.user.services.openclaw-shared-sync = lib.mkIf (cfg.sharedWorkspace.enable && pkgs.stdenv.isLinux) {
-      Unit.Description = "Sync OpenClaw shared workspace via rclone";
+      Unit.Description = "Sync OpenClaw shared workspace via rclone (GDrive)";
       Service = {
         Type = "oneshot";
-        ExecStart = let
-          syncScript = pkgs.writeShellScript "openclaw-shared-sync" ''
-            set -euo pipefail
-            SHARED="$HOME/.openclaw/workspace/shared"
-            REMOTE="${cfg.sharedWorkspace.remote}"
-            mkdir -p "$SHARED"
-            ${if cfg.sharedWorkspace.direction == "bisync" then ''
-              ${pkgs.rclone}/bin/rclone bisync "$SHARED" "$REMOTE" \
-                --create-empty-src-dirs --resilient --recover \
-                --conflict-resolve newer --fix-case 2>&1 || {
-                  ${pkgs.rclone}/bin/rclone bisync "$SHARED" "$REMOTE" \
-                    --create-empty-src-dirs --resync \
-                    --conflict-resolve newer --fix-case 2>&1
-                }
-            '' else if cfg.sharedWorkspace.direction == "pull" then ''
-              ${pkgs.rclone}/bin/rclone sync "$REMOTE" "$SHARED" 2>&1
-            '' else ''
-              ${pkgs.rclone}/bin/rclone sync "$SHARED" "$REMOTE" 2>&1
-            ''}
-          '';
-        in "${syncScript}";
+        ExecStart = "${syncScript}";
       };
     };
 

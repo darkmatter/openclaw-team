@@ -91,9 +91,9 @@ darwin-rebuild switch --flake .
 - **acpx config** — automatically written to `~/.acpx/config.json`
 - **Auto-decrypted secrets** — gateway password and Volt token via sops-nix (no manual token files)
 
-## Shared Workspace
+## Shared Workspace (Google Drive)
 
-Team members can sync a `shared/` subdirectory in their OpenClaw workspace via rclone. This is useful for shared skills, team wiki, memory, and tool notes.
+The team workspace syncs via Google Drive using a service account — **no per-user setup needed**.
 
 ```nix
 openclaw-dm = {
@@ -102,20 +102,20 @@ openclaw-dm = {
 
   sharedWorkspace = {
     enable = true;
-    remote = "s3:darkmatter-openclaw/shared";  # or dropbox:, gdrive:, etc.
-    interval = "5m";       # sync every 5 minutes
-    direction = "bisync";  # two-way sync (default)
+    folderId = "1ABCxyz...";  # shared GDrive folder ID
+    # interval = "5m";        # default
+    # direction = "bisync";   # default: two-way sync
   };
 };
 ```
 
-Configure the rclone remote first: `rclone config`
+The service account key is stored in `secrets/gdrive-sa-key.yaml` (sops-encrypted). rclone is auto-configured at activation time.
 
 **Workspace layout:**
 
 ```
 ~/.openclaw/workspace/
-├── shared/              ← rclone-synced across team
+├── shared/              ← GDrive-synced across team
 │   ├── skills/          ← team skills
 │   ├── team-wiki/       ← shared knowledge base
 │   ├── memory/          ← team memory
@@ -125,6 +125,20 @@ Configure the rclone remote first: `rclone config`
 ├── SOUL.md              ← personal (agent personality)
 └── HEARTBEAT.md         ← personal (background tasks)
 ```
+
+## Enrolling a Team Member
+
+```bash
+# Run from the repo root:
+./scripts/enroll <github-username> [key-label]
+```
+
+This will:
+1. Read the host's age public key (from sops-nix or SSH key)
+2. Fetch SSH keys from `github.com/<username>.keys` and convert to age
+3. Write keys to `keys/<label>.txt`
+4. Regenerate `.sops.yaml` with all enrolled keys
+5. Commit and push → GitHub Actions re-encrypts all secrets
 
 ## Adding a Team Member
 
