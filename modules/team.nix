@@ -1,15 +1,18 @@
 # Dark Matter OpenClaw team module
 #
+# This module provides:
+#   1. Team infrastructure: sops secrets, SSH→age key, shared workspace (GDrive)
+#   2. Sensible defaults for programs.openclaw config (all lib.mkDefault, easily overridden)
+#   3. acpx agent config for Volt VMs
+#
 # Usage:
 #   openclaw-dm = {
 #     enable = true;
-#     tailscaleMachineName = "my-macbook";   # your Tailscale hostname
-#     role = "primary";                       # runs gateway locally
+#     tailscaleMachineName = "my-macbook";
 #   };
 #
-#   # Multi-machine (desktop + laptop):
-#   # Desktop:  role = "primary";   tailscaleMachineName = "my-desktop";
-#   # Laptop:   role = "remote-personal"; primaryHost = "my-desktop";
+#   # Override any openclaw config normally:
+#   programs.openclaw.instances.default.config.agents.list = [ ... ];
 #
 { config, lib, pkgs, inputs ? {}, ... }:
 
@@ -17,12 +20,9 @@ let
   cfg = config.openclaw-dm;
 
   tailnet = "tail6277a6.ts.net";
-  gatewayPort = 18789;
 
-  # Compute gateway URL from tailscale machine name
   gatewayUrl = "wss://${cfg.tailscaleMachineName}.${tailnet}";
 
-  # For remote roles, compute the primary URL
   primaryGatewayUrl =
     if cfg.role == "primary" then gatewayUrl
     else "wss://${cfg.primaryHost}.${tailnet}";
@@ -36,55 +36,10 @@ let
 
   voltVMs = [ 1 2 3 4 ];
 
-  defaultAgentConfig = model: {
-    agentDir = "~/.openclaw/agents/main/agent";
-    default = true;
-    id = "main";
-    identity = {
-      emoji = "🦞";
-      name = "OpenClaw";
-      theme = "ayu";
-    };
-    inherit model;
-    name = "Main Agent";
-    sandbox.mode = "off";
-    subagents.allowAgents = [ "*" ];
-    tools = {
-      allow = [ "*" ];
-      deny = [ "canvas" ];
-      elevated.enabled = true;
-      profile = "coding";
-    };
-    workspace = "~/.openclaw/workspace";
-  };
-
-  coderAgent = model: {
-    agentDir = "~/.openclaw/agents/coder/agent";
-    default = false;
-    id = "coder";
-    identity = {
-      emoji = "⚡";
-      name = "Volt";
-      theme = "ayu";
-    };
-    inherit model;
-    name = "Coding Agent";
-    sandbox.mode = "off";
-    subagents.allowAgents = [ "main" ];
-    tools = {
-      allow = [ "*" ];
-      deny = [ "canvas" ];
-      elevated.enabled = true;
-      profile = "coding";
-    };
-    workspace = "~/.openclaw/workspace";
-  };
-
   isPrimary = cfg.role == "primary";
   isRemote = cfg.role == "remote-personal" || cfg.role == "remote-server";
-  isServer = cfg.role == "remote-server";
 
-  # Shared workspace sync helpers
+  # Shared workspace sync
   syncScript = pkgs.writeShellScript "openclaw-shared-sync" ''
     set -euo pipefail
     SHARED="$HOME/.openclaw/workspace/shared"
@@ -118,15 +73,17 @@ let
     else 300;
 
 in {
+
+  # ── Options ──────────────────────────────────────────────────────────
+  # These control team infrastructure only. OpenClaw config is set via
+  # programs.openclaw directly (with lib.mkDefault so you can override).
+
   options.openclaw-dm = {
-    enable = lib.mkEnableOption "Dark Matter OpenClaw team config";
+    enable = lib.mkEnableOption "Dark Matter OpenClaw team infrastructure";
 
     tailscaleMachineName = lib.mkOption {
       type = lib.types.str;
-      description = ''
-        Your Tailscale machine hostname (as shown in `tailscale status`).
-        Used to compute the gateway URL: wss://<name>.${tailnet}
-      '';
+      description = "Your Tailscale machine hostname (from `tailscale status`).";
       example = "coopers-mac-studio";
     };
 
@@ -134,121 +91,65 @@ in {
       type = lib.types.enum [ "primary" "remote-personal" "remote-server" ];
       default = "primary";
       description = ''
-        primary         = runs the gateway locally with Tailscale Funnel.
-                          This is the main machine you work from.
-        remote-personal = connects to your primary gateway from another
-                          personal device (e.g. laptop → desktop).
-        remote-server   = headless server that connects to a primary gateway.
-                          No interactive features, optimized for CI/automation.
+        primary         = runs gateway locally with Tailscale Funnel
+        remote-personal = personal device connecting to your primary
+        remote-server   = headless server connecting to a primary
       '';
     };
 
     primaryHost = lib.mkOption {
       type = lib.types.str;
       default = "";
-      description = ''
-        Tailscale machine name of your primary gateway.
-        Only used when role is remote-personal or remote-server.
-      '';
-      example = "my-mac-studio";
-    };
-
-    gateway.port = lib.mkOption {
-      type = lib.types.port;
-      default = gatewayPort;
-      description = "Gateway port";
-    };
-
-    model = lib.mkOption {
-      type = lib.types.str;
-      default = models.SONNET;
-      description = "Default model for agents";
-    };
-
-    enableCoder = lib.mkOption {
-      type = lib.types.bool;
-      default = true;
-      description = "Enable the coder agent alongside main";
-    };
-
-    secrets = {
-      passwordPath = lib.mkOption {
-        type = lib.types.nullOr lib.types.str;
-        default = if config.sops.secrets ? "openclaw-gateway-password"
-          then config.sops.secrets.openclaw-gateway-password.path
-          else null;
-        defaultText = lib.literalExpression "sops-decrypted gateway_password";
-        description = "Path to decrypted gateway password (auto-set from sops-nix)";
-      };
-      tokenPath = lib.mkOption {
-        type = lib.types.nullOr lib.types.str;
-        default = null;
-        description = "Path to decrypted gateway token (agenix/sops-nix)";
-      };
-      voltPasswordPath = lib.mkOption {
-        type = lib.types.nullOr lib.types.str;
-        default = if config.sops.secrets ? "openclaw-volt-password"
-          then config.sops.secrets.openclaw-volt-password.path
-          else null;
-        defaultText = lib.literalExpression "sops-decrypted volt_gateway_password";
-        description = "Path to decrypted Volt VM password for ACP (auto-set from sops-nix)";
-      };
+      description = "Tailscale name of your primary gateway (required for remote roles).";
     };
 
     manageSopsSecrets = lib.mkOption {
       type = lib.types.bool;
       default = true;
-      description = "Auto-configure sops-nix to decrypt team secrets";
+      description = "Auto-configure sops-nix to decrypt team secrets.";
     };
 
     sopsIdentityPaths = lib.mkOption {
       type = lib.types.listOf lib.types.str;
       default = [];
-      description = "Extra age/ssh identity paths for sops-nix decryption";
+      description = "Extra identity paths for sops-nix decryption.";
     };
 
     sharedWorkspace = {
       enable = lib.mkOption {
         type = lib.types.bool;
         default = false;
-        description = "Sync a shared/ subdirectory in the workspace via rclone (Google Drive)";
+        description = "Sync shared/ subdirectory via Google Drive.";
       };
 
       teamDriveId = lib.mkOption {
         type = lib.types.str;
         default = "0AMjJCQnNMu-AUk9PVA";
-        description = "Google Shared Drive (Team Drive) ID. Default: darkmatter shared drive.";
+        description = "Google Shared Drive ID.";
       };
 
       folderId = lib.mkOption {
         type = lib.types.str;
         default = "1G8fUAxyuK4Nnslauy-QWkfP4FKATVoGy";
-        description = "Folder ID within the Shared Drive. Default: openclaw-workspace folder.";
+        description = "Folder ID within the Shared Drive.";
       };
 
       interval = lib.mkOption {
         type = lib.types.str;
         default = "5m";
-        description = "Sync interval";
+        description = "Sync interval.";
       };
 
       direction = lib.mkOption {
         type = lib.types.enum [ "bisync" "pull" "push" ];
         default = "bisync";
-        description = "bisync = two-way; pull = remote→local; push = local→remote";
       };
-    };
-
-    extraConfig = lib.mkOption {
-      type = lib.types.attrs;
-      default = {};
-      description = "Extra config merged into openclaw.json";
     };
   };
 
-  config = lib.mkIf cfg.enable {
-    home.packages = [ pkgs.ssh-to-age ];
+  # ── Config ───────────────────────────────────────────────────────────
 
+  config = lib.mkIf cfg.enable {
     assertions = [
       {
         assertion = isRemote -> cfg.primaryHost != "";
@@ -256,121 +157,131 @@ in {
       }
     ];
 
-    programs.openclaw = {
-      instances.default = {
-        enable = true;
+    home.packages = [ pkgs.ssh-to-age ];
 
-        config = lib.recursiveUpdate ({
-          agents = {
-            list = [ (defaultAgentConfig cfg.model) ]
-              ++ lib.optional cfg.enableCoder (coderAgent cfg.model);
-            defaults = {
-              compaction.mode = "safeguard";
-              contextPruning = { mode = "cache-ttl"; ttl = "1h"; };
-              heartbeat.every = "1h";
-              maxConcurrent = 4;
-              model = {
-                fallbacks = [ models.SONNET models.GPT ];
-                primary = cfg.model;
-              };
-              models = {
-                ${models.SONNET} = {};
-                ${models.GPT} = { alias = "GPT"; };
-                ${models.AUTO} = { alias = "Auto"; };
-              };
-            };
+    # ── OpenClaw config defaults ─────────────────────────────────────
+    # All lib.mkDefault — override anything by setting it directly in
+    # your own programs.openclaw.instances.default.config.
+
+    programs.openclaw.instances.default = {
+      enable = lib.mkDefault true;
+
+      config = {
+        agents.defaults = {
+          compaction.mode = lib.mkDefault "safeguard";
+          contextPruning = {
+            mode = lib.mkDefault "cache-ttl";
+            ttl = lib.mkDefault "1h";
           };
-
-          auth.profiles = {
-            "anthropic:default" = { mode = "token"; provider = "anthropic"; };
-            "openai:default" = { mode = "api_key"; provider = "openai"; };
-            "openrouter:default" = { mode = "api_key"; provider = "openrouter"; };
+          heartbeat.every = lib.mkDefault "1h";
+          maxConcurrent = lib.mkDefault 4;
+          model = {
+            fallbacks = lib.mkDefault [ models.SONNET models.GPT ];
+            primary = lib.mkDefault models.SONNET;
           };
+          models = {
+            ${models.SONNET} = {};
+            ${models.GPT} = { alias = lib.mkDefault "GPT"; };
+            ${models.AUTO} = { alias = lib.mkDefault "Auto"; };
+          };
+        };
 
-          gateway = {
-            auth = {
-              mode = "password";
-              allowTailscale = true;
-            } // lib.optionalAttrs (cfg.secrets.tokenPath != null) {
-              token = cfg.secrets.tokenPath;
-            } // lib.optionalAttrs (cfg.secrets.passwordPath != null) {
-              password = cfg.secrets.passwordPath;
+        auth.profiles = {
+          "anthropic:default" = {
+            mode = lib.mkDefault "token";
+            provider = lib.mkDefault "anthropic";
+          };
+          "openai:default" = {
+            mode = lib.mkDefault "api_key";
+            provider = lib.mkDefault "openai";
+          };
+          "openrouter:default" = {
+            mode = lib.mkDefault "api_key";
+            provider = lib.mkDefault "openrouter";
+          };
+        };
+
+        gateway = {
+          auth = {
+            mode = lib.mkDefault "password";
+            allowTailscale = lib.mkDefault true;
+          };
+          port = lib.mkDefault 18789;
+        } // (
+          if isPrimary then {
+            mode = lib.mkDefault "local";
+            bind = lib.mkDefault "loopback";
+            tailscale = {
+              mode = lib.mkDefault "funnel";
+              resetOnExit = lib.mkDefault true;
             };
-            port = cfg.gateway.port;
-          } // (
-            if isPrimary then {
-              mode = "local";
-              bind = "loopback";
-              tailscale = { mode = "funnel"; resetOnExit = true; };
-              remote = {
-                transport = "direct";
-                url = gatewayUrl;
-              } // lib.optionalAttrs (cfg.secrets.passwordPath != null) {
-                password = cfg.secrets.passwordPath;
-              } // lib.optionalAttrs (cfg.secrets.tokenPath != null) {
-                token = cfg.secrets.tokenPath;
-              };
-              controlUi.allowedOrigins = [ gatewayUrl ];
-            } else {
-              mode = "remote";
-              bind = "loopback";
-              tailscale.mode = "off";
-              remote = {
-                transport = "direct";
-                url = primaryGatewayUrl;
-              } // lib.optionalAttrs (cfg.secrets.passwordPath != null) {
-                password = cfg.secrets.passwordPath;
-              } // lib.optionalAttrs (cfg.secrets.tokenPath != null) {
-                token = cfg.secrets.tokenPath;
-              };
-            }
+            remote = {
+              transport = lib.mkDefault "direct";
+              url = lib.mkDefault gatewayUrl;
+            };
+            controlUi.allowedOrigins = lib.mkDefault [ gatewayUrl ];
+          } else {
+            mode = lib.mkDefault "remote";
+            bind = lib.mkDefault "loopback";
+            tailscale.mode = lib.mkDefault "off";
+            remote = {
+              transport = lib.mkDefault "direct";
+              url = lib.mkDefault primaryGatewayUrl;
+            };
+          }
+        );
+
+        acp = {
+          enabled = lib.mkDefault true;
+          backend = lib.mkDefault "acpx";
+          defaultAgent = lib.mkDefault "volt-1";
+          allowedAgents = lib.mkDefault (
+            (map (id: "volt-${toString id}") voltVMs)
+            ++ [ "codex" "claude" "pi" ]
           );
-
-          # ACP config for Volt VMs
-          acp = {
-            enabled = true;
-            backend = "acpx";
-            defaultAgent = "volt-1";
-            allowedAgents =
-              (map (id: "volt-${toString id}") voltVMs)
-              ++ [ "codex" "claude" "pi" ];
-            maxConcurrentSessions = 8;
-            stream = { coalesceIdleMs = 300; maxChunkChars = 1200; };
-            runtime.ttlMinutes = 120;
+          maxConcurrentSessions = lib.mkDefault 8;
+          stream = {
+            coalesceIdleMs = lib.mkDefault 300;
+            maxChunkChars = lib.mkDefault 1200;
           };
+          runtime.ttlMinutes = lib.mkDefault 120;
+        };
 
-          plugins = {
-            allow = [ "acpx" ];
-            entries.acpx = {
-              enabled = true;
-              config = {
-                permissionMode = "approve-all";
-                nonInteractivePermissions = "deny";
-              };
+        plugins = {
+          allow = lib.mkDefault [ "acpx" ];
+          entries.acpx = {
+            enabled = lib.mkDefault true;
+            config = {
+              permissionMode = lib.mkDefault "approve-all";
+              nonInteractivePermissions = lib.mkDefault "deny";
             };
           };
+        };
 
-          tools = {
-            agentToAgent = { allow = [ "*" ]; enabled = true; };
-            elevated.enabled = true;
-            exec = { ask = "off"; host = "gateway"; security = "full"; };
-            links.enabled = true;
-            sessions.visibility = "all";
-            profile = "full";
+        tools = {
+          agentToAgent = {
+            allow = lib.mkDefault [ "*" ];
+            enabled = lib.mkDefault true;
           };
+          elevated.enabled = lib.mkDefault true;
+          exec = {
+            ask = lib.mkDefault "off";
+            host = lib.mkDefault "gateway";
+            security = lib.mkDefault "full";
+          };
+          links.enabled = lib.mkDefault true;
+          sessions.visibility = lib.mkDefault "all";
+          profile = lib.mkDefault "full";
+        };
 
-          channels = {};
-          bindings = [];
-          skills.entries = {};
-          messages.tts.auto = "off";
-          cron.enabled = true;
-          env.shellEnv.enabled = true;
-          session.dmScope = "per-channel-peer";
-        }) cfg.extraConfig;
+        cron.enabled = lib.mkDefault true;
+        env.shellEnv.enabled = lib.mkDefault true;
+        session.dmScope = lib.mkDefault "per-channel-peer";
       };
     };
 
-    # sops-nix: decrypt team secrets automatically
+    # ── sops-nix secrets ─────────────────────────────────────────────
+
     sops = lib.mkIf cfg.manageSopsSecrets {
       age = {
         sshKeyPaths = [
@@ -413,7 +324,9 @@ in {
       };
     };
 
-    # Persist SSH host key as age private key for sops CLI usage
+    # ── Activation scripts ───────────────────────────────────────────
+
+    # Persist SSH host key as age private key for sops CLI
     home.activation.sopsAgeFromHostKey = lib.hm.dag.entryBefore [ "sopsNix" ] ''
       AGE_DIR="${if pkgs.stdenv.isDarwin
         then "${config.home.homeDirectory}/Library/Application Support/sops/age"
@@ -438,7 +351,7 @@ in {
       fi
     '';
 
-    # Write API keys env file for the gateway service
+    # Write API keys env file
     home.activation.openclawTeamEnv = lib.mkIf cfg.manageSopsSecrets (
       lib.hm.dag.entryAfter [ "sopsNix" ] ''
         _envFile="$HOME/.openclaw/env.team"
@@ -452,58 +365,37 @@ in {
       ''
     );
 
-    # Shared workspace: auto-configure rclone for GDrive using service account
+    # Wire gateway password from sops into openclaw config
+    home.activation.openclawTeamGatewayAuth = lib.mkIf cfg.manageSopsSecrets (
+      lib.hm.dag.entryAfter [ "sopsNix" "openclawConfigFiles" ] ''
+        OC_JSON="$HOME/.openclaw/openclaw.json"
+        if [[ -f "$OC_JSON" ]] && command -v jq >/dev/null 2>&1; then
+          _pw="$(cat ${config.sops.secrets.openclaw-gateway-password.path} 2>/dev/null)" || true
+          if [[ -n "$_pw" ]]; then
+            _tmp="$(mktemp)"
+            ${pkgs.jq}/bin/jq --arg pw "$_pw" '.gateway.auth.password = $pw | .gateway.remote.password = $pw' "$OC_JSON" > "$_tmp" && mv "$_tmp" "$OC_JSON"
+          fi
+        fi
+      ''
+    );
+
+    # ── Shared workspace (GDrive) ────────────────────────────────────
+
     home.activation.openclawSharedWorkspace = lib.mkIf cfg.sharedWorkspace.enable (
       lib.hm.dag.entryAfter [ "sopsNix" "linkGeneration" ] ''
         mkdir -p "$HOME/.openclaw/workspace/shared"
         mkdir -p "$HOME/.config/rclone"
 
-        # sops-nix decrypts the YAML; convert to JSON for rclone
         SA_KEY_PATH="$HOME/.config/openclaw-gdrive-sa.json"
         SA_SOPS_PATH="${config.sops.secrets.openclaw-gdrive-sa-key.path}"
         if [[ -f "$SA_SOPS_PATH" ]]; then
-          # sops-nix gives us the raw decrypted YAML; use python to convert
-          ${pkgs.python3}/bin/python3 -c "
-import json, sys
-# Parse simple key: value YAML (no nested structures)
-data = {}
-current_key = None
-current_val = []
-with open('$SA_SOPS_PATH') as f:
-    for line in f:
-        stripped = line.rstrip('\n')
-        if not stripped.startswith(' ') and ':' in stripped:
-            if current_key:
-                data[current_key] = '\n'.join(current_val).rstrip('\n') if len(current_val) > 1 else (current_val[0] if current_val else '')
-            k, v = stripped.split(':', 1)
-            current_key = k.strip()
-            v = v.strip()
-            current_val = [] if v == '|' else [v]
-        elif current_key and stripped.startswith('    '):
-            current_val.append(stripped[4:])
-    if current_key:
-        data[current_key] = '\n'.join(current_val).rstrip('\n') if len(current_val) > 1 else (current_val[0] if current_val else '')
-# Ensure private_key has trailing newline
-if 'private_key' in data and not data['private_key'].endswith('\n'):
-    data['private_key'] += '\n'
-with open('$SA_KEY_PATH', 'w') as f:
-    json.dump(data, f, indent=2)
-"
+          ${pkgs.python3}/bin/python3 ${../scripts/yaml-to-json.py} "$SA_SOPS_PATH" "$SA_KEY_PATH"
           chmod 600 "$SA_KEY_PATH"
         fi
 
-        # Generate rclone config for the team drive
         RCLONE_CONF="$HOME/.config/rclone/rclone.conf"
-        # Remove old openclaw-team section if present
         if [[ -f "$RCLONE_CONF" ]]; then
-          ${pkgs.python3}/bin/python3 -c "
-import re, sys
-with open('$RCLONE_CONF') as f:
-    content = f.read()
-content = re.sub(r'\[openclaw-team\][^\[]*', '', content)
-with open('$RCLONE_CONF', 'w') as f:
-    f.write(content.strip() + '\n')
-" 2>/dev/null || true
+          ${pkgs.gnused}/bin/sed -i '/^\[openclaw-team\]/,/^\[/{/^\[openclaw-team\]/d;/^\[/!d;}' "$RCLONE_CONF" 2>/dev/null || true
         fi
         cat >> "$RCLONE_CONF" <<EOF
 
@@ -545,7 +437,8 @@ EOF
       Install.WantedBy = [ "timers.target" ];
     };
 
-    # acpx agent config — maps volt-N to openclaw ACP bridges
+    # ── acpx agent config ────────────────────────────────────────────
+
     home.file.".acpx/config.json".text = builtins.toJSON {
       agents = builtins.listToAttrs (map (id: {
         name = "volt-${toString id}";
