@@ -9,7 +9,7 @@
 let
   models = {
     SONNET = "anthropic/claude-sonnet-4-6";
-    OPUS = "anthropic/claude-opus-4-6";
+    OPUS = "anthropic/claude-opus-4-7";
   };
 in {
   programs.openclaw.instances.default.config = {
